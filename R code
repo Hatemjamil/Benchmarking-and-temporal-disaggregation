@@ -1,1 +1,131 @@
 
+
+
+library(tempdisagg)
+library(rJava)
+library(rjdbench)
+library(knitr)
+library(car)
+library(Metrics)
+library(readxl)
+library(tseries)
+library(e1071)
+library(MASS)
+library(rockchalk)
+
+
+
+set.seed(123)
+calcrho<-function(rho,rho1,rho2) {
+   rho*(1-rho1*rho2)/sqrt((1-rho1^2)*(1-rho2^2))
+}
+
+Q.x <- ts(matrix(NA, nrow = 60, ncol = 1000), frequency = 4, start = 2000)
+Q.y <- ts(matrix(NA, nrow = 60, ncol = 1000), frequency = 4, start = 2000)
+A.y <- ts(matrix(NA, nrow = 15, ncol = 1000), frequency = 1, start = 2000)
+A.x <- ts(matrix(NA, nrow = 15, ncol = 1000), frequency = 4, start = 2000)
+corrq <- rep(NA,100)
+corra <- rep(NA,100)
+
+#rho <- c(0.95,0.90,0.85,0.65,0.50)
+
+for(i in 1 :1000){
+  burn.in <-300
+  n <-60
+  rho <- 0.10
+  rho1 <-0.7
+  rho2 <-0.7
+  q12 <-calcrho(rho,rho1,rho2)
+  eps <-mvrnorm(n+burn.in,mu=c(100,50),Sigma=cbind(c(1,q12),c(q12,1)))
+  x <-arima.sim(list(order=c(1,0,0), ar=0.7),n,innov=eps[burn.in+1:n,1],start.innov=eps[1:burn.in,1])
+  y <-arima.sim(list(order=c(1,0,0), ar=0.7),n,innov=eps[burn.in+1:n,2],start.innov=eps[1:burn.in,2])
+
+Q.x[,i]  <- ts(x, start = 2000, frequency = 4)
+Q.y[,i]  <- ts(y, start = 2000, frequency = 4)
+A.y[,i]  <- ta(Q.y[,i], conversion = "sum", to = "annual")
+A.x[,i]  <- ta(Q.x[,i], conversion = "sum", to = "annual")
+
+corrq[i] <- cor(Q.x[,i],Q.y[,i])
+corra[i] <- cor(A.y[,i],A.x[,i])
+
+}
+
+
+rmse.0 <- matrix(NA, nrow = 1000, ncol = 11)
+mre.0 <- matrix(NA, nrow = 1000, ncol = 11)
+cor.0 <- matrix(NA, nrow = 1000, ncol = 11)
+
+for (i in 1:1000) {
+  # Statistical Methods
+  chowlin0 <- predict(td(A.y[,i] ~ 0+Q.x[,i], conversion = "sum", to = "quarterly", method = "chow-lin-maxlog"))
+  fernadz0 <- predict(td(A.y[,i] ~ 0+Q.x[,i], conversion = "sum", to = "quarterly", method = "fernandez"))
+  littman0 <- predict(td(A.y[,i] ~ 0+Q.x[,i], conversion = "sum", to = "quarterly", method = "litterman-maxlog"))
+  
+    chowlin <- predict(td(A.y[,i] ~ Q.x[,i], conversion = "sum", to = "quarterly", method = "chow-lin-maxlog"))
+  fernadz <- predict(td(A.y[,i] ~ Q.x[,i], conversion = "sum", to = "quarterly", method = "fernandez"))
+  littman <- predict(td(A.y[,i] ~ Q.x[,i], conversion = "sum", to = "quarterly", method = "litterman-maxlog"))
+  
+  #mathematical Methods
+rata <- ts(Pro.rata(Q.x[,i],A.x[,i],A.y[,i])$first,start = 2004, frequency = 4)
+denton <- predict(td(A.y[,i] ~ 0+Q.x[,i], conversion = "sum", to = "quarterly", method = "denton-cholette", criterion = "proportional", h = 1))
+
+causey <- jd3_grp(Q.x[,i], A.y[,i], conversion = "Sum", eps = 1e-12, iter = 500, denton = T)
+
+cholett <- jd3_cholette(Q.x[,i]*(sum(A.y[,i])/sum(A.x[,i])), A.y[,i], rho = 0.90, lambda = 1, bias = "None", conversion = "Sum")
+cubicsp <- jd3_cubicspline(Q.x[,i], A.y[,i], conversion = "Sum", obsposition = 0)
+
+rmse.0[i, ] <- c(rrse(Q.y[,i],chowlin0),rrse(Q.y[,i],fernadz0),rrse(Q.y[,i],littman0),rrse(Q.y[,i],chowlin),rrse(Q.y[,i],fernadz),rrse(Q.y[,i],littman),rrse(Q.y[,i],rata),rrse(Q.y[,i],denton),rrse(Q.y[,i],causey),rrse(Q.y[,i],cholett), rrse(Q.y[,i],cubicsp))
+
+mre.0[i, ] <- c(mre(Q.y[,i],chowlin0),mre(Q.y[,i],fernadz0),mre(Q.y[,i],littman0),mre(Q.y[,i],chowlin),mre(Q.y[,i],fernadz),mre(Q.y[,i],littman),mre(Q.y[,i],rata),mre(Q.y[,i],denton),mre(Q.y[,i],causey),mre(Q.y[,i],cholett), mre(Q.y[,i],cubicsp))
+  
+cor.0[i, ] <- c(cor(Q.y[,i],chowlin0),cor(Q.y[,i],fernadz0),cor(Q.y[,i],littman0),cor(Q.y[,i],chowlin),cor(Q.y[,i],fernadz),cor(Q.y[,i],littman),cor(Q.y[,i],rata),cor(Q.y[,i],denton),cor(Q.y[,i],causey),cor(Q.y[,i],cholett), cor(Q.y[,i],cubicsp))
+}
+
+par(mfrow=c(1,3))
+boxplot(rmse.0, names=c("CLwc","Fwc","LMwc","Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "RRSE")
+boxplot(mre.0,names=c("CLwc","Fwc","LMwc","Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "RRSE")
+boxplot(cor.0,names=c("CLwc","Fwc","LMwc","Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "RRSE")
+
+
+# Extrapolation
+rmse.1 <- matrix(NA, nrow = 1000, ncol = 11)
+mre.1 <- matrix(NA, nrow = 1000, ncol = 11)
+cor.1 <- matrix(NA, nrow = 1000, ncol = 11)
+
+for (i in 1:1000) {
+  Ay <- ts(A.y[1:14,i], frequency = 1, start = 2000)
+  
+  # Statistical Methods
+chowlin0 <- predict(td(Ay ~ 0+Q.x[,i], conversion = "sum", to = "quarterly", method = "chow-lin-maxlog"))
+fernadz0 <- predict(td(Ay ~ 0+Q.x[,i], conversion = "sum", to = "quarterly", method = "fernandez"))
+littman0 <- predict(td(Ay ~ 0+Q.x[,i], conversion = "sum", to = "quarterly", method = "litterman-maxlog"))
+  
+    chowlin <- predict(td(Ay ~ Q.x[,i], conversion = "sum", to = "quarterly", method = "chow-lin-maxlog"))
+  fernadz <- predict(td(Ay ~ Q.x[,i], conversion = "sum", to = "quarterly", method = "fernandez"))
+  littman <- predict(td(Ay ~ Q.x[,i], conversion = "sum", to = "quarterly", method = "litterman-maxlog"))
+  
+  #mathematical Methods
+ratabech <- Pro.rata(Q.x[,i],A.x[,i],Ay)$first
+rataextra <- Pro.rata(Q.x[,i],A.x[,i],Ay)$second
+rata <- ts(c(ratabech, rataextra), start = 2004, frequency = 4)
+
+denton <- predict(td(Ay ~ 0+Q.x[,i], conversion = "sum", to = "quarterly", method = "denton-cholette", criterion = "proportional", h = 1))
+
+causey <- jd3_grp(Q.x[,i], Ay, conversion = "Sum", eps = 1e-12, iter = 500, denton = T)
+
+cholett <- jd3_cholette(Q.x[,i]*(sum(Ay)/sum(A.x[,i])), Ay, rho = 0.85, lambda = 1, bias = "None", conversion = "Sum")
+cubicsp <- jd3_cubicspline(Q.x[,i], Ay, conversion = "Sum", obsposition = 0)
+
+rmse.1[i, ] <- c(rrse(Q.y[57:60,i],chowlin0[57:60]),rrse(Q.y[57:60,i],fernadz0[57:60]),rrse(Q.y[57:50,i],littman0[57:60]),rrse(Q.y[57:60,i],chowlin[57:60]),rrse(Q.y[57:60,i],fernadz[57:60]),rrse(Q.y[57:60,i],littman[57:60]),rrse(Q.y[57:60,i],rata[57:60]),rrse(Q.y[57:60,i],denton[57:60]),rrse(Q.y[57:60,i],causey),rrse(Q.y[57:60,i],cholett[57:60]), rrse(Q.y[57:60,i],cubicsp[57:60]))
+
+mre.1[i, ] <- c(mre(Q.y[57:60,i],chowlin0[57:60]),mre(Q.y[57:60,i],fernadz0[57:60]),mre(Q.y[57:50,i],littman0[57:60]),mre(Q.y[57:60,i],chowlin[57:60]),mre(Q.y[57:60,i],fernadz[57:60]),mre(Q.y[57:60,i],littman[57:60]),mre(Q.y[57:60,i],rata[57:60]),mre(Q.y[57:60,i],denton[57:60]),mre(Q.y[57:60,i],causey),mre(Q.y[57:60,i],cholett[57:60]), mre(Q.y[57:60,i],cubicsp[57:60]))
+
+}
+
+par(mfrow=c(1,2))
+boxplot(mre.0, names=c("CLwc","Fwc","LMwc","Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "MRE-Disaggregation")
+boxplot(mre.1, names=c("CLwc","Fwc","LMwc","Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "MRE-Extrapolation")
+
+
+
+
