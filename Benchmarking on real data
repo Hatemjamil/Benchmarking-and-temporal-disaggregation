@@ -1,0 +1,217 @@
+#Pro_Rata Function
+Pro.rata <- function(QI,AI,AB){
+  QI <- as.vector(QI)
+  AI <- as.vector(AI)
+  AB <- as.vector(AB)
+  l <- 4*length(AB)
+    QB <-rep(NA, l)
+  if (length(QI) == 4*length(AB)){
+    BI <- AB/AI
+  } 
+  else {
+    
+    BI <- AB/AI[length(AB)]
+  }
+    m <- 0
+  for(i in 1:length(AB)){
+    for(j in (m+1):(4*i)){
+      QB[j] <- BI[i]*QI[j]
+    }
+    m <- j
+  }
+    dissa <- ts(QB, frequency = 4)
+    BI1 <- BI[length(BI)]
+  QI1 <- QI[(l+1):length(QI)]
+  extra <- ts(BI1*QI1, frequency = 4)
+    return(list(first=dissa, second=extra))
+ }
+
+library(tempdisagg)
+library(rJava)
+library(rjdbench)
+library(knitr)
+library(car)
+library(readxl)
+library(tseries)
+library(e1071)
+
+#Imports Dataset
+Benchmark <- read_excel("D:/Master Degree/Thesis and internship/Analysis folder/Benchmarking/Imports V4.xlsx", sheet = "Benchmark")
+#Exports Dataset
+#Benchmark <- read_excel("D:/Master Degree/Thesis and internship/Analysis folder/Benchmarking/Exports V4.xlsx", sheet = "Benchmark")
+
+Benchmark.19  <- ts(Benchmark[,-1], start = 2004, frequency = 4)
+Benchmark.19  <- ta(Benchmark.19, conversion = "sum", to = "annual")
+Benchmark.18  <- ts(Benchmark[1:60,-1], start = 2004, frequency = 4)
+Benchmark.18  <- ta(Benchmark.18, conversion = "sum", to = "annual")
+
+#Imports Dataset
+Indicator <- read_excel("D:/Master Degree/Thesis and internship/Analysis folder/Benchmarking/Imports V4.xlsx", sheet = "The indicator")
+
+#Exports Dataset
+#Indicator <- read_excel("D:/Master Degree/Thesis and internship/Analysis folder/Benchmarking/Exports V4.xlsx", sheet = "The indicator")
+
+Indicator.19  <- ts(Indicator[,-1], start = 2004, frequency = 4)
+A.Indi.19     <- ta(Indicator.19, conversion = "sum", to = "annual")
+Indicator.18  <- ts(Indicator[1:60,-1], start = 2004, frequency = 4)
+A.Indi.18     <- ta(Indicator.18, conversion = "sum", to = "annual")
+
+# Descriptive statistics
+cname <- c("Belgium", "France", "Germany", "Italy", "Luxembourg", "Netherlands", "Poland", "Spain", "Switzerlands", "UK","Austria","Denmark","Slovenia","Sweden", "Finland")
+par(mfrow=c(4,4))
+for (i in 1:15) {
+  plot(Benchmark.18[,i], col = i, lwd = 2, main = cname[i], ylab = "1000$")
+  lines(A.Indi.18[,i], col = i+1, ylab = "1000$")
+}
+
+par(mfrow=c(4,4))
+for (i in 1:15) {
+  plot(Indicator.18[,i], col = i, lwd = 2, main = cname[i], ylab = "1000$")
+}
+
+Q.stpv <- rep(NA, 15)
+for (i in 1:15) {
+  Q.stpv[i] <- adf.test(Indicator.18[,i])$p.value
+}
+
+Q.Descps <- data.frame(apply(Indicator.18,2,mean), apply(Indicator.18,2,min), apply(Indicator.18,2,max),apply(Indicator.18,2,sd), apply(Indicator.18,2, median))
+colnames(Q.Descps) <- c("Mean","Min","Max", "SD", "Median")
+Q.Descps <- data.frame(Q.Descps,Q.stpv)
+kable(Q.Descps)
+
+A.Descps <- data.frame(apply(Benchmark.18,2,mean), apply(Benchmark.18,2,min), apply(Benchmark.18,2,max),apply(Benchmark.18,2,sd), apply(Benchmark.18,2, median))
+colnames(A.Descps) <- c("Mean","Min","Max", "SD", "Median")
+kable(A.Descps)
+
+
+
+#Benchmark-toindicator ratio
+ABI <- matrix(NA, nrow = 15, ncol = 15)
+A.corr <- rep(NA,15)
+H.BI.r <- rep(NA,15)
+t.discp <- rep(NA,15)
+
+par(mfrow=c(4,4))
+for (i in 1:15) {
+  A.corr[i]  <-   cor(Benchmark.18[,i],A.Indi.18[,i])
+  t.discp[i] <- (sum(Benchmark.18[,i])-sum(A.Indi.18[,i]))/sum(Benchmark.18[,i])
+  H.BI.r[i]  <- (sum(Benchmark.18[,i])/sum(A.Indi.18[,i]))
+  ABI[,i]    <- (Benchmark.18[,i]/A.Indi.18[,i])
+  plot(ts(ABI[,i], start = 2004, frequency = 1) , type = "l", main = cname[i], lwd = 2, ylab = "BI ratio")
+}
+
+boxplot(ABI, names=cname, las=2, main = "Annual Benchmark-to-Indicator")
+data.frame(cname, apply(ABI, 2, mean),apply(ABI, 2, var), apply(diff(ABI), 2, var), t.discp, A.corr)
+par(mfrow=c(1,1))
+barplot(apply(diff(ABI), 2, var), beside = T, las=2, names.arg = cname, main = "Variance of the first difference of annual BI")
+mse.gr <- matrix(NA, nrow = 15, ncol = 8)
+mae.gr <- matrix(NA, nrow = 15, ncol = 8)
+cor.gr <- matrix(NA, nrow = 15, ncol = 8)
+
+par(mfrow=c(4,4))
+for (i in 1:15) {
+  # Statistical Methods
+  chowlin <- predict(td(Benchmark.18[,i] ~ Indicator.18[,i], conversion = "sum", to = "quarterly", method = "chow-lin-maxlog"))
+  fernadz <- predict(td(Benchmark.18[,i] ~ Indicator.18[,i], conversion = "sum", to = "quarterly", method = "fernandez"))
+  littman <- predict(td(Benchmark.18[,i] ~ Indicator.18[,i], conversion = "sum", to = "quarterly", method = "litterman-maxlog"))
+  
+  #mathematical Methods
+  rata <- ts(Pro.rata(Indicator.18[,i],A.Indi.18[,i],Benchmark.18[,i])$first,start = 2004, frequency = 4)
+  denton <- predict(td(Benchmark.18[,i] ~ 0+Indicator.18[,i], conversion = "sum", to = "quarterly", method = "denton-cholette", criterion = "proportional", h = 1))
+  causey <- jd3_grp(Indicator.18[,i], Benchmark.18[,i], conversion = "Sum", eps = 1e-12, iter = 500, denton = T)
+  cholett <- jd3_cholette(Indicator.18[,i]*(sum(Benchmark.18[,i])/sum(A.Indi.18[,i])), Benchmark.18[,i], rho = 0.84, lambda = 1, bias = "None", conversion = "Sum")
+  
+cubicsp <- jd3_cubicspline(Indicator.18[,i], Benchmark.18[,i], conversion = "Sum", obsposition = 0)
+
+lnames <- c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D","Cubic-S")
+
+plot(Indicator.18[,i]/chowlin, type = "l", main = cname[i], lwd = 2, ylab = "BI ratio", col = 1)
+  lines(Indicator.18[,i]/fernadz, col = 2)
+  lines(Indicator.18[,i]/littman, col = 3)
+  lines(Indicator.18[,i]/rata, col = 4)
+  lines(Indicator.18[,i]/denton, col = 5)
+  lines(Indicator.18[,i]/causey, col = 6)
+  lines(Indicator.18[,i]/cholett, col = 7)
+  lines(Indicator.18[,i]/cubicsp, col = 8)
+  legend("topright",legend = lnames, col = 1:8, cex =0.6, lty=1, text.font=2)
+  
+  I.gr <- (Indicator.18[,i]-lag(Indicator.18[,i],-1))/lag(Indicator.18[,i],-1)
+  chowlin.gr <- (chowlin-lag(chowlin,-1))/lag(chowlin,-1)
+  fernadz.gr <- (fernadz-lag(fernadz,-1))/lag(fernadz,-1)
+  littman.gr <- (littman-lag(littman,-1))/lag(littman,-1)
+  rata.gr    <- (rata-lag(rata,-1))/lag(rata,-1)
+  denton.gr <- (denton-lag(denton,-1))/lag(denton,-1)
+  causey.gr <- (causey-lag(causey,-1))/lag(causey,-1)
+  cholett.gr <- (cholett-lag(cholett,-1))/lag(cholett,-1)
+  cubicsp.gr <- (cubicsp-lag(cubicsp,-1))/lag(cubicsp,-1)
+  
+mse.gr[i, ] <- c(mean((I.gr-chowlin.gr)^2),mean((I.gr-fernadz.gr)^2),mean((I.gr-littman.gr)^2),mean((I.gr-rata.gr)^2),mean((I.gr-denton.gr)^2),mean((I.gr-causey.gr)^2),mean((I.gr-cholett.gr)^2), mean((I.gr-cubicsp.gr)^2))
+  
+mae.gr[i, ] <- c(mae(I.gr,chowlin.gr),mae(I.gr,fernadz.gr),mae(I.gr,littman.gr),mae(I.gr,rata.gr),mae(I.gr,denton.gr),mae(I.gr,causey.gr),mae(I.gr,cholett.gr), mae(I.gr,cubicsp.gr))
+
+cor.gr[i, ] <- c(cor(I.gr,chowlin.gr),cor(I.gr,fernadz.gr),cor(I.gr,littman.gr),cor(I.gr,rata.gr),cor(I.gr,denton.gr),cor(I.gr,causey.gr),cor(I.gr,cholett.gr), cor(I.gr,cubicsp.gr))
+
+}
+
+par(mfrow=c(1,3))
+boxplot(mse.gr, names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "MSE of Growth-Rate")
+boxplot(mae.gr, names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "MAE of Growth-Rate")
+boxplot(cor.gr, names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Growth rates correlation")
+
+par(mfrow=c(1,1))
+colnames(mse.gr) <- c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D","Cubic-S")
+rownames(mse.gr) <- cname
+barplot(t(mse.gr), beside = T, las=2, col=c(1:8), main = "MSE of Growth rate by country")
+legend("topright",rownames(t(mse.gr)),cex =0.8, fill=c(1:8))
+
+
+# Extrapolation, one year ahead
+Ex.mse.gr <- matrix(NA, nrow = 15, ncol = 8)
+Ex.mae.gr <- matrix(NA, nrow = 15, ncol = 8)
+LYBI <- matrix(NA, nrow = 15, ncol = 8)
+AB2AS <- matrix(NA, nrow = 15, ncol = 8)
+
+
+for (j in 1:15) {
+   # Statistical Methods
+  chowlin <- predict(td(Benchmark.18[,j] ~ Indicator.19[,j], conversion = "sum", to = "quarterly", method = "chow-lin-maxlog"))
+  fernadz <- predict(td(Benchmark.18[,j] ~ Indicator.19[,j], conversion = "sum", to = "quarterly", method = "fernandez"))
+  littman <- predict(td(Benchmark.18[,j] ~ Indicator.19[,j], conversion = "sum", to = "quarterly", method = "litterman-maxlog"))
+  
+  #mathematical Methods
+  ratabech <- Pro.rata(Indicator.19[,j],A.Indi.19[,j],Benchmark.18[,j])$first
+  rataextra <- Pro.rata(Indicator.19[,j],A.Indi.19[,j],Benchmark.18[,j])$second
+  rata <- ts(c(ratabech, rataextra), start = 2004, frequency = 4)
+  denton <- predict(td(Benchmark.18[,j] ~ 0+Indicator.19[,j], conversion = "sum", to = "quarterly", method = "denton-cholette", criterion = "proportional", h = 1))
+  causey <- jd3_grp(Indicator.19[,j], Benchmark.18[,j], conversion = "Sum", eps = 1e-12, iter = 500, denton = T)
+  cholett <- jd3_cholette(Indicator.19[,j]*(sum(Benchmark.18[,j])/sum(A.Indi.19[,j][1:15])), Benchmark.18[,j], rho = 0.84, lambda = 1, bias = "None", conversion = "Sum")
+  
+  cubicsp <- jd3_cubicspline(Indicator.19[,j], Benchmark.18[,j], conversion = "Sum", obsposition = 0)
+
+  ##############
+  I.gr <- (Indicator.19[,j]-lag(Indicator.19[,j],-1))/lag(Indicator.19[,j],-1)
+  chowlin.gr <- (chowlin-lag(chowlin,-1))/lag(chowlin,-1)
+  fernadz.gr <- (fernadz-lag(fernadz,-1))/lag(fernadz,-1)
+  littman.gr <- (littman-lag(littman,-1))/lag(littman,-1)
+  rata.gr    <- (rata-lag(rata,-1))/lag(rata,-1)
+  denton.gr <- (denton-lag(denton,-1))/lag(denton,-1)
+  causey.gr <- (causey-lag(causey,-1))/lag(causey,-1)
+  cholett.gr <- (cholett-lag(cholett,-1))/lag(cholett,-1)
+  cubicsp.gr <- (cubicsp-lag(cubicsp,-1))/lag(cubicsp,-1)
+
+Ex.mse.gr[j, ] <- c(mean((I.gr[60:63]-chowlin.gr[60:63])^2),mean((I.gr[60:63]-fernadz.gr[60:63])^2),mean((I.gr[60:63]-littman.gr[60:63])^2),mean((I.gr[60:63]-rata.gr[60:63])^2),mean((I.gr[60:63]-denton.gr[60:63])^2),mean((I.gr[60:63]-causey.gr[60:63])^2),mean((I.gr[60:63]-cholett.gr[60:63])^2), mean((I.gr[60:63]-cubicsp.gr[60:63])^2))
+
+Ex.mae.gr[j, ] <- c(mean(abs(I.gr[60:63]-chowlin.gr[60:63])),mean(abs(I.gr[60:63]-fernadz.gr[60:63])),mean(abs(I.gr[60:63]-littman.gr[60:63])),mean(abs(I.gr[60:63]-rata.gr[60:63])),mean(abs(I.gr[60:63]-denton.gr[60:63])),mean(abs(I.gr[60:63]-causey.gr[60:63])),mean(abs(I.gr[60:63]-cholett.gr[60:63])), mean(abs(I.gr[60:63]-cubicsp.gr[60:63])))
+
+LYBI[j,] <- c(sum(chowlin[61:64])/sum(Indicator.19[61:64,j]),sum(fernadz[61:64])/sum(Indicator.19[61:64,j]),sum(littman[61:64])/sum(Indicator.19[61:64,j]),sum(rata[61:64])/sum(Indicator.19[61:64,j]),sum(denton[61:64])/sum(Indicator.19[61:64,j]),sum(causey[61:64])/sum(Indicator.19[61:64,j]),sum(cholett[61:64])/sum(Indicator.19[61:64,j]),sum(cubicsp[61:64])/sum(Indicator.19[61:64,j]))
+
+AB2AS[j,] <- c(sum(chowlin[61:64])/sum(Benchmark.19[16,j]),sum(fernadz[61:64])/sum(Benchmark.19[16,j]),sum(littman[61:64])/sum(Benchmark.19[16,j]),sum(rata[61:64])/sum(Benchmark.19[16,j]),sum(denton[61:64])/sum(Benchmark.19[16,j]),sum(causey[61:64])/sum(Benchmark.19[16,j]),sum(cholett[61:64])/sum(Benchmark.19[16,j]),sum(cubicsp[61:64])/sum(Benchmark.19[16,j]))
+
+}
+
+par(mfrow = c(2,2))
+boxplot(Ex.mse.gr, names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "MSE of Growth-Rate")
+boxplot(Ex.mae.gr, names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "MAE of Growth-Rate")
+boxplot(LYBI, names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Extrapolated year BI ratio")
+boxplot(AB2AS, names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Annual benchmark to annual sum of extrapolated year")
+
