@@ -1,0 +1,220 @@
+library(tempdisagg)
+library(rJava)
+library(rjdbench)
+library(knitr)
+library(car)
+library(Metrics)
+
+
+#Pro_Rata Function
+Pro.rata <- function(QI,AI,AB){
+  QI <- as.vector(QI)
+  AI <- as.vector(AI)
+  AB <- as.vector(AB)
+  l <- 4*length(AB)
+    QB <-rep(NA, l)
+  if (length(QI) == 4*length(AB)){
+    BI <- AB/AI
+  } 
+  else {
+    
+    BI <- AB/AI[length(AB)]
+  }
+    m <- 0
+  for(i in 1:length(AB)){
+    for(j in (m+1):(4*i)){
+      QB[j] <- BI[i]*QI[j]
+    }
+    m <- j
+  }
+    dissa <- ts(QB, frequency = 4)
+    BI1 <- BI[length(BI)]
+  QI1 <- QI[(l+1):length(QI)]
+  extra <- ts(BI1*QI1, frequency = 4)
+    return(list(first=dissa, second=extra))
+ }
+```
+
+# Benchmarking Sumulation study
+mse.gr <- array(NA, dim = c(1000,8,6))
+mae.gr <- array(NA, dim = c(1000,8,6))
+cor.gr <- array(NA, dim = c(1000,8,6))
+A.corr <- matrix(NA, nrow = 1000, ncol = 6)
+ABI <-  array(NA, dim = c(15,1000,6))
+
+dis.1 <-  seq(0.09,0.11, by=0.00135)
+dis.2 <- seq(0.07,0.13, by=0.0042)
+dis.3 <- seq(0.03,0.17, by=0.0095)
+dis.4 <- seq(0.00,0.20, by=0.014)
+dis.5 <- c(rep(0.02, 7), rep(0.18,8))
+dis.6 <- c(rep(0.01, 5), rep(0.10,5), rep(0.20,5))
+dis.m <- cbind(dis.1,dis.2,dis.3,dis.4,dis.5,dis.6)
+
+TS.bm <- array(NA, dim = c(60,1000,6))
+TS.hf  <- array(NA, dim = c(60,1000,6)) # high-frequency version
+
+for (m in 1:6){
+for (j in 1:1000) {
+  #yt  <- 100 + arima.sim(list(order=c(1,0,0), ar=.7), n=60) # Stationary
+  yt <- 100 + arima.sim(list(order=c(1,1,0), ar=.7), n=59)   #non-stationary
+  yt <- ts(yt, start = 2000, frequency = 4)
+  TS.hf[,j,m] <- yt
+  A.Indi <- ta(ts(yt, start = 2000, frequency = 4), conversion = "sum", to = "annual") 
+  A.B <- rep(NA,15)
+  dis.r <- sample(dis.m[,m])
+  for (i in 1:15) {
+    A.B[i] <- A.Indi[i] + A.Indi[i]*dis.r[i]
+  }
+  
+  TS.bm[,j,m] <- A.B
+  A.B <- ts(A.B, start = 2000, frequency = 1)
+  I.Q <- ts(yt, start = 2000, frequency = 4)
+  I.A <- ta(I.Q, conversion = "sum", to = "annual")
+  
+  A.corr[j,m] <- cor(A.B,I.A)
+  ABI[,j,m]   <-   (A.B/I.A)
+
+  # Statistical Methods
+  chowlin <- predict(td(A.B ~ I.Q, conversion = "sum", to = "quarterly", method = "chow-lin-maxlog"))
+  fernadz <- predict(td(A.B ~ I.Q, conversion = "sum", to = "quarterly", method = "fernandez"))
+  littman <- predict(td(A.B ~ I.Q, conversion = "sum", to = "quarterly", method = "litterman-maxlog"))
+  
+  #mathematical Methods
+  rata <- ts(Pro.rata(I.Q,I.A,A.B)$first,start = 2000, frequency = 4)
+  denton <- predict(td(A.B ~ 0+I.Q, conversion = "sum", to = "quarterly", method = "denton-cholette", criterion = "proportional", h = 1))
+  causey <- jd3_grp(I.Q, A.B, conversion = "Sum", eps = 1e-12, iter = 500, denton = T)
+  cholett <- jd3_cholette(I.Q*(sum(A.B)/sum(I.A)), A.B, rho = 0.85, lambda = 1, bias = "None", conversion = "Sum")
+  cubicsp <- jd3_cubicspline(I.Q, A.B, conversion = "Sum", obsposition = 0)
+
+  I.gr <- (I.Q-lag(I.Q,-1))/lag(I.Q,-1)
+  chowlin.gr <- (chowlin-lag(chowlin,-1))/lag(chowlin,-1)
+  fernadz.gr <- (fernadz-lag(fernadz,-1))/lag(fernadz,-1)
+  littman.gr <- (littman-lag(littman,-1))/lag(littman,-1)
+  rata.gr    <- (rata-lag(rata,-1))/lag(rata,-1)
+  denton.gr <- (denton-lag(denton,-1))/lag(denton,-1)
+  causey.gr <- (causey-lag(causey,-1))/lag(causey,-1)
+  cholett.gr <- (cholett-lag(cholett,-1))/lag(cholett,-1)
+  cubicsp.gr <- (cubicsp-lag(cubicsp,-1))/lag(cubicsp,-1)
+  
+mse.gr[j,,m ] <- c(mse(I.gr,chowlin.gr),mse(I.gr,fernadz.gr),mse(I.gr,littman.gr),mse(I.gr,rata.gr),mse(I.gr,denton.gr),mse(I.gr,causey.gr),mse(I.gr,cholett.gr), mse(I.gr,cubicsp.gr))
+mae.gr[j,,m ] <- c(mae(I.gr,chowlin.gr),mae(I.gr,fernadz.gr),mae(I.gr,littman.gr),mae(I.gr,rata.gr),mae(I.gr,denton.gr),mae(I.gr,causey.gr),mae(I.gr,cholett.gr), mae(I.gr,cubicsp.gr))
+cor.gr[j,,m ] <- c(cor(I.gr,chowlin.gr),cor(I.gr,fernadz.gr),cor(I.gr,littman.gr),cor(I.gr,rata.gr),cor(I.gr,denton.gr),cor(I.gr,causey.gr),cor(I.gr,cholett.gr), cor(I.gr,cubicsp.gr))
+}
+}
+
+#dd <- data.frame(apply(ABI, 2, mean),apply(ABI, 2, var), apply(diff(ABI), 2, var))
+#boxplot(mse.gr)
+#boxplot(cor.gr)
+
+
+# Plots
+# BI rate Plots
+par(mfrow = c(3,2))
+hist(apply(diff(ABI[,,1]), 2, var), xlab = "Variance", main = "Scenario 1: BI between 1.09 - 1.11")
+hist(apply(diff(ABI[,,2]), 2, var), xlab = "Variance", main = "Scenario 2: BI between 1.07 - 1.13")
+hist(apply(diff(ABI[,,3]), 2, var), xlab = "Variance", main = "Scenario 3: BI between 1.03 - 1.17")
+hist(apply(diff(ABI[,,4]), 2, var), xlab = "Variance", main = "Scenario 4: BI between 1.0 - 1.20")
+hist(apply(diff(ABI[,,5]), 2, var), xlab = "Variance", main = "Scenario 5: BI 1.02 and 1.18")
+hist(apply(diff(ABI[,,6]), 2, var), xlab = "Variance", main = "Scenario 6: BI 1.01, 1.10 and 1.20")
+
+
+hist(A.corr[,1], xlab = "Correlation", main = "Scenario 1: BI between 1.09 - 1.11")
+hist(A.corr[,2], xlab = "Correlation", main = "Scenario 2: BI between 1.07 - 1.13")
+hist(A.corr[,3], xlab = "Correlation", main = "Scenario 3: BI between 1.03 - 1.17")
+hist(A.corr[,4], xlab = "Correlation", main = "Scenario 4: BI between 1.0 - 1.20")
+hist(A.corr[,5], xlab = "Correlation", main = "Scenario 5: BI 1.02 and 1.18")
+hist(A.corr[,6], xlab = "Correlation", main = "Scenario 6: BI 1.01, 1.10 and 1.20")
+
+# Compare Between the different methods
+par(mfrow = c(2,3))
+boxplot(mse.gr[,,1], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 1")
+boxplot(mse.gr[,,2], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 2")
+boxplot(mse.gr[,,3], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 3")
+boxplot(mse.gr[,,4], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 4")
+boxplot(mse.gr[,,5], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 5")
+boxplot(mse.gr[,,6], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 6")
+
+par(mfrow = c(2,3))
+boxplot(mae.gr[,,1], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 1")
+boxplot(mae.gr[,,2], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 2")
+boxplot(mae.gr[,,3], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 3")
+boxplot(mae.gr[,,4], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 4")
+boxplot(mae.gr[,,5], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 5")
+boxplot(mae.gr[,,6], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 6")
+
+
+par(mfrow = c(2,3))
+boxplot(cor.gr[,,1], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 1")
+boxplot(cor.gr[,,2], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 2")
+boxplot(cor.gr[,,3], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 3")
+boxplot(cor.gr[,,4], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 4")
+boxplot(cor.gr[,,5], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 5")
+boxplot(cor.gr[,,6], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 6")
+
+# method.perf <- data.frame(apply(mse.gr, 2, max),apply(mse.gr, 2, mean),apply(mae.gr, 2, max),apply(mae.gr, 2, mean),apply(cor.gr, 2, min),apply(cor.gr, 2, mean))
+#names(method.perf) <- c("mse.max","mse.mean","mae.max", "mae.mean", "cor.min", "cor.mean")
+
+
+# Extrapolation, one year ahead
+Ex.mse.gr <- array(NA, dim = c(1000,8,6))
+Ex.mae.gr <- array(NA, dim = c(1000,8,6))
+
+#LYBI <- matrix(NA, nrow = 1000, ncol = 8)
+#AB2AS <- matrix(NA, nrow = 1000, ncol = 8)
+
+for (m in 1:6){
+for (j in 1:1000) {
+  #yt <- TS.ar1[1:56,j]
+  yt <- ts(TS.bm[1:56,j,m], start = 2000, frequency = 4)
+  An <- ta(yt, conversion = "sum", to = "annual")
+  hfi <- TS.hf[,j,m]
+  I.Q <- ts(hfi, start = 2000, frequency = 4)
+  I.A <- ta(I.Q, conversion = "sum", to = "annual")
+
+ 
+  # Statistical Methods
+  chowlin <- predict(td(An ~ I.Q, conversion = "sum", to = "quarterly", method = "chow-lin-maxlog"))
+  fernadz <- predict(td(An ~ I.Q, conversion = "sum", to = "quarterly", method = "fernandez"))
+  littman <- predict(td(An ~ I.Q, conversion = "sum", to = "quarterly", method = "litterman-maxlog"))
+  
+  #mathematical Methods
+  ratabech <- Pro.rata(I.Q,I.A,An)$first
+  rataextra <- Pro.rata(I.Q,I.A,An)$second
+  rata <- ts(c(ratabech, rataextra), start = 2000, frequency = 4)
+  denton <- predict(td(An ~ 0+I.Q, conversion = "sum", to = "quarterly", method = "denton-cholette", criterion = "proportional", h = 1))
+  causey <- jd3_grp(I.Q, An, conversion = "Sum", eps = 1e-12, iter = 500, denton = T)
+  cholett <- jd3_cholette(I.Q*(sum(An)/sum(I.A[1:14])), An, rho = 0.85, lambda = 1, bias = "None", conversion = "Sum")
+  cubicsp <- jd3_cubicspline(I.Q, An, conversion = "Sum", obsposition = 0)
+
+  ##############
+  I.gr <- (I.Q-lag(I.Q,-1))/lag(I.Q,-1)
+  chowlin.gr <- (chowlin-lag(chowlin,-1))/lag(chowlin,-1)
+  fernadz.gr <- (fernadz-lag(fernadz,-1))/lag(fernadz,-1)
+  littman.gr <- (littman-lag(littman,-1))/lag(littman,-1)
+  rata.gr    <- (rata-lag(rata,-1))/lag(rata,-1)
+  denton.gr <- (denton-lag(denton,-1))/lag(denton,-1)
+  causey.gr <- (causey-lag(causey,-1))/lag(causey,-1)
+  cholett.gr <- (cholett-lag(cholett,-1))/lag(cholett,-1)
+  cubicsp.gr <- (cubicsp-lag(cubicsp,-1))/lag(cubicsp,-1)
+
+Ex.mse.gr[j,,m ] <- c(mean((I.gr[56:59]-chowlin.gr[56:59])^2),mean((I.gr[56:59]-fernadz.gr[56:59])^2),mean((I.gr[56:59]-littman.gr[56:59])^2),mean((I.gr[56:59]-rata.gr[56:59])^2),mean((I.gr[56:59]-denton.gr[56:59])^2),mean((I.gr[56:59]-causey.gr[56:59])^2),mean((I.gr[56:59]-cholett.gr[56:59])^2), mean((I.gr[56:59]-cubicsp.gr[56:59])^2))
+
+Ex.mae.gr[j,,m ] <- c(mean(abs(I.gr[56:59]-chowlin.gr[56:59])),mean(abs(I.gr[56:59]-fernadz.gr[56:59])),mean(abs(I.gr[56:59]-littman.gr[56:59])),mean(abs(I.gr[56:59]-rata.gr[56:59])),mean(abs(I.gr[56:59]-denton.gr[56:59])),mean(abs(I.gr[56:59]-causey.gr[56:59])),mean(abs(I.gr[56:59]-cholett.gr[56:59])), mean(abs(I.gr[56:59]-cubicsp.gr[56:59])))
+
+#LYBI[j,] <- c(sum(chowlin[57:60])/sum(I.Q[57:60]),sum(fernadz[57:60])/sum(I.Q[57:60]),sum(littman[57:60])/sum(I.Q[57:60]),sum(rata[57:60])/sum(I.Q[57:60]),sum(denton[57:60])/sum(I.Q[57:60]),sum(causey[57:60])/sum(I.Q[57:60]),sum(cholett[57:60])/sum(I.Q[57:60]),sum(cubicsp[57:60])/sum(I.Q[57:60]))
+
+#AB2AS[j,] <- c(sum(chowlin[57:60])/sum(TS.ar1[57:60,j]),sum(fernadz[57:60])/sum(TS.ar1[57:60,j]),sum(littman[57:60])/sum(TS.ar1[57:60,j]),sum(rata[57:60])/sum(TS.ar1[57:60,j]),sum(denton[57:60])/sum(TS.ar1[57:60,j]),sum(causey[57:60])/sum(TS.ar1[57:60,j]),sum(cholett[57:60])/sum(TS.ar1[57:60,j]),sum(cubicsp[57:60])/sum(TS.ar1[57:60,j]))
+
+}
+}
+
+# Compare Between the different methods
+par(mfrow = c(2,3))
+boxplot(Ex.mse.gr[,,1], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 1")
+boxplot(Ex.mse.gr[,,2], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 2")
+boxplot(Ex.mse.gr[,,3], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 3")
+boxplot(Ex.mse.gr[,,4], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 4")
+boxplot(Ex.mse.gr[,,5], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 5")
+boxplot(Ex.mse.gr[,,6], names=c("Chow-Lin","Fernandez","Litterman", "Pro-Rata", "Denton", "Causey-T", "Chollete-D", "Cubic-S"), las=2, main = "Scenario 6")
+
+
